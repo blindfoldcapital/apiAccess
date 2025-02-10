@@ -1,4 +1,3 @@
-
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
@@ -10,17 +9,16 @@ interface IERC20 {
 
 contract BlindfoldAPIAccess {
     address public owner;
-    uint256 public price;
+    mapping(address => uint256) public pricePerDay; // Token => Price per day
     mapping(address => uint256) public subscriptionExpiry;
     mapping(address => bool) public acceptedTokens;
 
     event Subscribed(address indexed user, uint256 expiry);
-    event TokenAdded(address token);
+    event TokenAdded(address token, uint256 pricePerDay);
     event TokenRemoved(address token);
 
-    constructor(uint256 _price) {
+    constructor() {
         owner = msg.sender;
-        price = _price;
     }
 
     modifier onlyOwner() {
@@ -28,36 +26,37 @@ contract BlindfoldAPIAccess {
         _;
     }
 
-    function setPrice(uint256 _price) external onlyOwner {
-        price = _price;
-    }
-
-    function addAcceptedToken(address token) external onlyOwner {
+    function setTokenPrice(address token, uint256 _pricePerDay) external onlyOwner {
+        require(_pricePerDay > 0, "Price must be greater than zero");
         acceptedTokens[token] = true;
-        emit TokenAdded(token);
+        pricePerDay[token] = _pricePerDay;
+        emit TokenAdded(token, _pricePerDay);
     }
 
     function removeAcceptedToken(address token) external onlyOwner {
         acceptedTokens[token] = false;
+        pricePerDay[token] = 0;
         emit TokenRemoved(token);
     }
 
-    function buyAccessWithToken(address token, uint256 amount) external {
+    function buyAccessWithToken(address token, uint256 daysToBuy) external {
         require(acceptedTokens[token], "Token not accepted");
-        require(amount >= price, "Insufficient amount");
+        require(daysToBuy > 0, "Must buy at least one day");
 
+        uint256 totalCost = pricePerDay[token] * daysToBuy;
         IERC20 paymentToken = IERC20(token);
-        require(paymentToken.allowance(msg.sender, address(this)) >= amount, "Insufficient allowance");
-        require(paymentToken.transferFrom(msg.sender, address(this), amount), "Transfer failed");
+        require(paymentToken.allowance(msg.sender, address(this)) >= totalCost, "Insufficient allowance");
+        require(paymentToken.transferFrom(msg.sender, address(this), totalCost), "Transfer failed");
 
-        uint256 duration = 30 days;
+        uint256 newExpiry;
         if (subscriptionExpiry[msg.sender] > block.timestamp) {
-            subscriptionExpiry[msg.sender] += duration;
+            newExpiry = subscriptionExpiry[msg.sender] + (daysToBuy * 1 days);
         } else {
-            subscriptionExpiry[msg.sender] = block.timestamp + duration;
+            newExpiry = block.timestamp + (daysToBuy * 1 days);
         }
+        subscriptionExpiry[msg.sender] = newExpiry;
 
-        emit Subscribed(msg.sender, subscriptionExpiry[msg.sender]);
+        emit Subscribed(msg.sender, newExpiry);
     }
 
     function checkAccess(address user) external view returns (bool) {
